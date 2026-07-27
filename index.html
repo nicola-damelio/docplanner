@@ -1,0 +1,1387 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Planner Documenti di Lavoro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: { brand: { 50: '#f0f9ff', 100: '#e0f2fe', 500: '#0ea5e9', 600: '#0284c7', 700: '#0369a1' } }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #f8fafc; color: #1e293b; }
+        .glass-panel { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.2); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+        .kanban-column { min-height: 200px; }
+        .doc-card { transition: all 0.2s ease; cursor: pointer; }
+        .doc-card:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }
+        .modal-overlay { background-color: rgba(0, 0, 0, 0.5); backdrop-filter: blur(4px); opacity: 0; visibility: hidden; transition: opacity 0.3s ease, visibility 0.3s ease; }
+        .modal-overlay.active { opacity: 1; visibility: visible; }
+        .modal-content { transform: scale(0.95); opacity: 0; transition: transform 0.3s ease, opacity 0.3s ease; }
+        .modal-overlay.active .modal-content { transform: scale(1); opacity: 1; }
+        .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+        .calendar-day { min-height: 90px; border: 1px solid #e2e8f0; border-radius: 6px; padding: 4px; background: white; user-select: none; }
+        .calendar-day.other-month { background-color: #f8fafc; color: #94a3b8; cursor: default; }
+        .calendar-day.today { border-color: #0ea5e9; }
+        .calendar-day.unavailable { background-image: repeating-linear-gradient(45deg, #f1f5f9, #f1f5f9 5px, #f8fafc 5px, #f8fafc 10px); color: #94a3b8; opacity: 0.8; }
+        .calendar-day.manual-excluded { background-image: repeating-linear-gradient(45deg, #fee2e2, #fee2e2 5px, #fef2f2 5px, #fef2f2 10px); border-color: #fca5a5; opacity: 0.9; }
+        .calendar-day.force-available { background-color: #f0fdf4; border-color: #bbf7d0; }
+        .cal-event { font-size: 0.65rem; padding: 2px 4px; margin-bottom: 2px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+        
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body class="h-screen flex flex-col font-sans overflow-hidden text-sm md:text-base">
+
+    <!-- Overlay scuro per menu mobile -->
+    <div id="mobile-overlay" class="fixed inset-0 bg-slate-900/50 z-40 hidden md:hidden transition-opacity" onclick="toggleMobileMenu()"></div>
+
+    <!-- Navigation Bar -->
+    <nav class="bg-white border-b border-slate-200 shadow-sm z-10 flex-shrink-0">
+        <div class="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+            <div class="flex flex-col md:flex-row justify-between md:h-16 py-2 md:py-0">
+                <div class="flex justify-between items-center w-full md:w-auto mb-2 md:mb-0">
+                    <div class="flex items-center gap-2 text-brand-600">
+                        <button onclick="toggleMobileMenu()" class="md:hidden text-slate-500 hover:text-brand-600 focus:outline-none p-1 mr-1">
+                            <i class="fas fa-bars text-xl"></i>
+                        </button>
+                        <i class="fas fa-layer-group text-xl md:text-2xl"></i>
+                        <span class="font-bold text-lg md:text-xl tracking-tight hidden sm:block">DocuPlanner</span>
+                    </div>
+                    <div class="relative w-full ml-3 md:hidden">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <i class="fas fa-search text-slate-400 text-xs"></i>
+                        </div>
+                        <input type="text" id="search-input-mobile" class="block w-full pl-9 pr-3 py-1.5 border border-slate-300 rounded-lg bg-slate-50 text-xs focus:ring-brand-500 focus:border-brand-500 transition-colors" placeholder="Cerca..." oninput="syncSearch(this.value)">
+                    </div>
+                </div>
+
+                <div class="hidden md:flex flex-1 max-w-md mx-6 items-center">
+                    <div class="relative w-full">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <i class="fas fa-search text-slate-400 text-sm"></i>
+                        </div>
+                        <input type="text" id="search-input-desktop" class="block w-full pl-10 pr-3 py-1.5 border border-slate-300 rounded-lg bg-slate-50 text-sm focus:ring-brand-500 focus:border-brand-500 transition-colors" placeholder="Cerca un documento..." oninput="syncSearch(this.value)">
+                    </div>
+                </div>
+
+                <div class="flex items-center space-x-2 overflow-x-auto hide-scrollbar w-full md:w-auto py-1 md:py-0 pb-1">
+                    <button onclick="optimizeSchedule()" class="flex-shrink-0 text-brand-600 hover:bg-brand-50 px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors border border-brand-200">
+                        <i class="fas fa-magic mr-1"></i> Ottimizza
+                    </button>
+                    <button id="btn-undo-optimize" onclick="undoOptimize()" class="hidden flex-shrink-0 text-orange-500 hover:bg-orange-50 px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors border border-orange-200">
+                        <i class="fas fa-undo mr-1"></i> Undo
+                    </button>
+                    
+                    <button onclick="resetPlanDates()" class="flex-shrink-0 text-slate-500 hover:bg-slate-50 px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors border border-slate-200" title="Ripristina date di inizio in base all'udienza">
+                        <i class="fas fa-calendar-times"></i> Reset
+                    </button>
+
+                    <div class="flex flex-shrink-0 border-x border-slate-200 px-1 mx-1">
+                        <button onclick="exportBackup()" class="text-slate-500 hover:text-brand-600 px-2 py-1.5 rounded-md text-sm transition-colors" title="Backup"><i class="fas fa-download"></i></button>
+                        <button onclick="document.getElementById('backup-file-input').click()" class="text-slate-500 hover:text-brand-600 px-2 py-1.5 rounded-md text-sm transition-colors" title="Ripristina"><i class="fas fa-upload"></i></button>
+                        <input type="file" id="backup-file-input" accept=".json" class="hidden" onchange="importBackup(event)">
+                    </div>
+
+                    <button onclick="openSettingsModal()" class="flex-shrink-0 text-slate-500 hover:text-brand-600 px-2 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors"><i class="fas fa-cog mr-1"></i> Impostazioni</button>
+                    <button onclick="openImportModal()" class="flex-shrink-0 text-slate-500 hover:text-brand-600 px-2 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors border border-slate-200"><i class="fas fa-file-import mr-1"></i> Importa</button>
+                    <button onclick="openDocModal()" class="flex-shrink-0 bg-brand-600 hover:bg-brand-700 text-white px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-medium shadow-sm transition-colors flex items-center gap-1 sm:gap-2"><i class="fas fa-plus"></i> Nuovo</button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex overflow-hidden relative">
+        <aside id="sidebar-menu" class="w-64 bg-white border-r border-slate-200 flex-shrink-0 flex-col absolute md:relative inset-y-0 left-0 z-40 transform -translate-x-full md:translate-x-0 transition-transform duration-300 h-full flex shadow-2xl md:shadow-none">
+            <div class="md:hidden flex justify-between items-center p-4 border-b border-slate-200 bg-brand-50">
+                <span class="font-bold text-brand-700"><i class="fas fa-filter mr-2"></i>Filtri</span>
+                <button onclick="toggleMobileMenu()" class="text-brand-700 hover:text-brand-900 text-lg p-1"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-4 border-b border-slate-100 bg-slate-50">
+                <h3 class="text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">Filtro Intervallo Date</h3>
+                <select id="date-filter-type" class="w-full mb-3 text-xs sm:text-sm border border-slate-300 rounded focus:ring-brand-500 p-1.5 bg-white outline-none" onchange="updateViews()">
+                    <option value="udienza">Cerca per Udienza</option>
+                    <option value="scadenza">Cerca per Scadenza</option>
+                </select>
+                <div class="flex flex-col gap-2">
+                    <div>
+                        <label class="text-[10px] font-semibold text-slate-500 uppercase">Da:</label>
+                        <input type="date" id="date-filter-start" class="w-full text-xs sm:text-sm border border-slate-300 rounded p-1.5 outline-none" onchange="updateViews()">
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-semibold text-slate-500 uppercase">A:</label>
+                        <input type="date" id="date-filter-end" class="w-full text-xs sm:text-sm border border-slate-300 rounded p-1.5 outline-none" onchange="updateViews()">
+                    </div>
+                </div>
+                <button onclick="document.getElementById('date-filter-start').value=''; document.getElementById('date-filter-end').value=''; updateViews();" class="mt-3 w-full text-xs font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 bg-white border border-slate-300 py-1.5 rounded transition-colors">Resetta Date</button>
+            </div>
+            <div class="p-4 flex-1 overflow-y-auto">
+                <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Filtra per Tipologia</h3>
+                <div id="filter-types-list" class="space-y-2"></div>
+                <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mt-6 mb-3">Stato Scadenza</h3>
+                <div class="space-y-2">
+                    <label class="flex items-center gap-2 cursor-pointer group"><input type="checkbox" id="filter-overdue" class="rounded border-slate-300 text-red-600 focus:ring-red-500" checked onchange="updateViews()"><span class="text-xs sm:text-sm text-slate-600 group-hover:text-slate-900"><i class="fas fa-exclamation-circle text-red-500 w-4"></i> Scaduti</span></label>
+                    <label class="flex items-center gap-2 cursor-pointer group"><input type="checkbox" id="filter-soon" class="rounded border-slate-300 text-orange-500 focus:ring-orange-500" checked onchange="updateViews()"><span class="text-xs sm:text-sm text-slate-600 group-hover:text-slate-900"><i class="fas fa-clock text-orange-500 w-4"></i> In scadenza (< 7 gg)</span></label>
+                    <label class="flex items-center gap-2 cursor-pointer group"><input type="checkbox" id="filter-ok" class="rounded border-slate-300 text-green-500 focus:ring-green-500" checked onchange="updateViews()"><span class="text-xs sm:text-sm text-slate-600 group-hover:text-slate-900"><i class="fas fa-check-circle text-green-500 w-4"></i> In regola</span></label>
+                </div>
+            </div>
+            <div class="p-4 border-t border-slate-200 bg-slate-50">
+                <div class="text-xs sm:text-sm text-slate-500"><i class="fas fa-info-circle mr-1"></i> Totale doc: <span id="total-docs-count" class="font-semibold text-slate-700">0</span></div>
+            </div>
+        </aside>
+
+        <!-- Main Board -->
+        <main class="flex-1 overflow-x-auto overflow-y-hidden bg-slate-50 p-3 sm:p-6 w-full">
+            <div class="flex flex-col h-full">
+                <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 gap-3">
+                    <div class="flex items-center gap-2 sm:gap-4 justify-between w-full sm:w-auto">
+                        <h1 class="text-xl sm:text-2xl font-bold text-slate-800">Bacheca Lavoro</h1>
+                        <div class="flex items-center gap-2 border-l border-slate-300 pl-3">
+                            <button onclick="toggleDeleteMode()" id="btn-delete-mode" class="text-slate-500 hover:text-red-600 px-2 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors border border-transparent hover:border-red-200 hover:bg-red-50">
+                                <i class="fas fa-check-square mr-1"></i> Seleziona
+                            </button>
+                            <div id="delete-actions" class="hidden items-center gap-1 sm:gap-2 bg-red-50 px-2 py-1 rounded-lg border border-red-200">
+                                <span class="text-[10px] sm:text-xs font-semibold text-red-700 mr-1"><span id="selected-count">0</span> sel.</span>
+                                <button onclick="selectAllDocs()" class="text-slate-600 hover:text-slate-800 bg-white border border-slate-300 px-1.5 py-1 rounded text-[10px] sm:text-xs font-medium transition-colors">Tutti</button>
+                                <button onclick="deleteSelectedDocs()" class="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-[10px] sm:text-xs font-medium shadow-sm transition-colors">Elimina</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex bg-white rounded-lg p-1 shadow-sm border border-slate-200 self-start sm:self-auto w-full sm:w-auto justify-between overflow-x-auto hide-scrollbar">
+                        <button onclick="switchView('kanban')" id="btn-view-kanban" class="px-3 py-1.5 rounded bg-slate-100 text-slate-700 font-medium text-xs sm:text-sm shadow-sm transition-colors whitespace-nowrap"><i class="fas fa-columns mr-1"></i> Kanban</button>
+                        <button onclick="switchView('calendar')" id="btn-view-calendar" class="px-3 py-1.5 rounded text-slate-500 hover:text-slate-700 font-medium text-xs sm:text-sm transition-colors whitespace-nowrap"><i class="fas fa-calendar-alt mr-1"></i> Calendario</button>
+                        <button onclick="switchView('priority')" id="btn-view-priority" class="px-3 py-1.5 rounded text-slate-500 hover:text-slate-700 font-medium text-xs sm:text-sm transition-colors whitespace-nowrap"><i class="fas fa-list-ol mr-1"></i> Priorità</button>
+                    </div>
+                </div>
+
+                <div id="view-kanban" class="flex-1 flex gap-4 sm:gap-6 pb-4 overflow-y-auto overflow-x-auto items-start">
+                    <!-- Column Todo -->
+                    <div class="w-[85vw] sm:w-80 flex-shrink-0 flex flex-col glass-panel rounded-xl max-h-full">
+                        <div class="p-3 sm:p-4 border-b border-slate-200 flex justify-between items-center bg-slate-100/50 rounded-t-xl sticky top-0 z-10">
+                            <h2 class="font-semibold text-slate-700 flex items-center gap-2 text-sm sm:text-base"><div class="w-3 h-3 rounded-full bg-slate-400"></div> Da Fare</h2>
+                            <span id="count-todo" class="bg-white text-slate-600 text-xs font-bold px-2 py-1 rounded-full shadow-sm">0</span>
+                        </div>
+                        <div id="col-todo" class="kanban-column flex-1 p-2 sm:p-3 space-y-3 overflow-y-auto" ondrop="drop(event, 'todo')" ondragover="allowDrop(event)"></div>
+                    </div>
+                    <!-- Column In Progress -->
+                    <div class="w-[85vw] sm:w-80 flex-shrink-0 flex flex-col glass-panel rounded-xl max-h-full">
+                        <div class="p-3 sm:p-4 border-b border-slate-200 flex justify-between items-center bg-blue-50/50 rounded-t-xl sticky top-0 z-10">
+                            <h2 class="font-semibold text-blue-700 flex items-center gap-2 text-sm sm:text-base"><div class="w-3 h-3 rounded-full bg-blue-500 animate-pulse"></div> In Lavorazione</h2>
+                            <span id="count-in-progress" class="bg-white text-blue-600 text-xs font-bold px-2 py-1 rounded-full shadow-sm">0</span>
+                        </div>
+                        <div id="col-in-progress" class="kanban-column flex-1 p-2 sm:p-3 space-y-3 overflow-y-auto" ondrop="drop(event, 'in-progress')" ondragover="allowDrop(event)"></div>
+                    </div>
+                    <!-- Column Done -->
+                    <div class="w-[85vw] sm:w-80 flex-shrink-0 flex flex-col glass-panel rounded-xl max-h-full">
+                        <div class="p-3 sm:p-4 border-b border-slate-200 flex justify-between items-center bg-green-50/50 rounded-t-xl sticky top-0 z-10">
+                            <h2 class="font-semibold text-green-700 flex items-center gap-2 text-sm sm:text-base"><div class="w-3 h-3 rounded-full bg-green-500"></div> Completato</h2>
+                            <span id="count-done" class="bg-white text-green-600 text-xs font-bold px-2 py-1 rounded-full shadow-sm">0</span>
+                        </div>
+                        <div id="col-done" class="kanban-column flex-1 p-2 sm:p-3 space-y-3 overflow-y-auto opacity-75" ondrop="drop(event, 'done')" ondragover="allowDrop(event)"></div>
+                    </div>
+                </div>
+
+                <!-- Calendar View -->
+                <div id="view-calendar" class="hidden flex-1 flex-col bg-white rounded-xl shadow-sm border border-slate-200 p-3 sm:p-4 overflow-hidden min-w-[600px] sm:min-w-0">
+                    <div class="flex justify-between items-center mb-4">
+                        <div class="flex items-center gap-3">
+                            <h2 class="text-base sm:text-lg font-bold text-slate-700" id="current-month-display">Mese Anno</h2>
+                            <span class="text-[10px] text-slate-400 bg-slate-100 px-2 py-1 rounded border border-slate-200">💡 Clicca o trascina appuntamenti e scadenze con il mouse!</span>
+                        </div>
+                        <div class="flex gap-1 sm:gap-2">
+                            <button onclick="changeMonth(-1)" class="p-1.5 sm:p-2 hover:bg-slate-100 rounded-full transition-colors"><i class="fas fa-chevron-left text-slate-600"></i></button>
+                            <button onclick="resetMonth()" class="px-2 sm:px-3 py-1 text-xs sm:text-sm font-medium bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700 transition-colors">Oggi</button>
+                            <button onclick="changeMonth(1)" class="p-1.5 sm:p-2 hover:bg-slate-100 rounded-full transition-colors"><i class="fas fa-chevron-right text-slate-600"></i></button>
+                        </div>
+                    </div>
+                    <div class="calendar-grid text-center font-semibold text-[10px] sm:text-xs text-slate-500 mb-2">
+                        <div>Lun</div><div>Mar</div><div>Mer</div><div>Gio</div><div>Ven</div><div>Sab</div><div>Dom</div>
+                    </div>
+                    <div id="calendar-days" class="calendar-grid flex-1 overflow-y-auto"></div>
+                </div>
+
+                <!-- Priority List View -->
+                <div id="view-priority" class="hidden flex-1 flex-col bg-white rounded-xl shadow-sm border border-slate-200 p-3 sm:p-6 overflow-y-auto">
+                    <h2 class="text-base sm:text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><i class="fas fa-exclamation-triangle text-red-500"></i> Lista Priorità</h2>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-xs sm:text-sm text-left text-slate-600 min-w-[700px]">
+                            <thead class="text-[10px] sm:text-xs text-slate-700 uppercase bg-slate-50 border-b border-slate-200">
+                                <tr>
+                                    <th class="px-2 sm:px-4 py-3">Stato</th>
+                                    <th class="px-2 sm:px-4 py-3">Documento</th>
+                                    <th class="px-2 sm:px-4 py-3">Tipologia</th>
+                                    <th class="px-2 sm:px-4 py-3">Scadenza (+60gg)</th>
+                                    <th class="px-2 sm:px-4 py-3">Inizio Previsto</th>
+                                    <th class="px-2 sm:px-4 py-3 text-right">Azioni</th>
+                                </tr>
+                            </thead>
+                            <tbody id="priority-list-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Gestione Singolo Giorno Modal -->
+    <div id="day-modal" class="modal-overlay fixed inset-0 z-[60] flex items-center justify-center p-4">
+        <div class="modal-content bg-white w-full max-w-sm rounded-xl shadow-2xl overflow-hidden flex flex-col">
+            <div class="px-4 py-3 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+                <h3 class="text-base font-bold text-slate-800" id="day-modal-title">Gestisci Giorno</h3>
+                <button onclick="closeDayModal()" class="text-slate-400 hover:text-slate-600"><i class="fas fa-times text-xl"></i></button>
+            </div>
+            <div class="p-4 flex flex-col gap-3">
+                <div id="day-modal-status" class="text-xs mb-2 p-2 rounded bg-slate-100 border border-slate-200"></div>
+                
+                <input type="hidden" id="day-modal-date">
+                
+                <div class="flex flex-col gap-2" id="day-modal-actions">
+                    <!-- Dinamically injected buttons -->
+                </div>
+
+                <div class="mt-2 pt-3 border-t border-slate-200 hidden" id="day-modal-custom-form">
+                    <label class="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Nuovo Impegno Singolo</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="day-modal-custom-name" class="flex-1 px-2 py-1.5 border border-slate-300 rounded text-xs outline-none focus:ring-2 focus:ring-brand-500" placeholder="Es. Riunione esterna">
+                        <input type="color" id="day-modal-custom-color" class="h-8 w-8 rounded cursor-pointer border border-slate-300 p-0.5" value="#ef4444">
+                    </div>
+                    <button onclick="saveCustomDay()" class="mt-2 w-full py-1.5 bg-brand-600 hover:bg-brand-700 text-white rounded text-xs font-medium">Salva Impegno</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Document Modal -->
+    <div id="doc-modal" class="modal-overlay fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-2 sm:p-0">
+        <div class="modal-content bg-white w-full max-w-lg rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh] sm:max-h-[90vh]">
+            <div class="px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+                <h3 class="text-base sm:text-lg font-bold text-slate-800" id="doc-modal-title">Nuovo Documento</h3>
+                <button onclick="closeDocModal()" class="text-slate-400 hover:text-slate-600 transition-colors p-1"><i class="fas fa-times text-xl"></i></button>
+            </div>
+            <div class="p-4 sm:p-6 overflow-y-auto flex-1">
+                <form id="doc-form" class="space-y-4">
+                    <input type="hidden" id="doc-id">
+                    <div>
+                        <label class="block text-xs sm:text-sm font-medium text-slate-700 mb-1">Titolo Documento *</label>
+                        <input type="text" id="doc-title" required class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none text-sm" placeholder="Es. Relazione Mensile">
+                    </div>
+                    <div>
+                        <label class="block text-xs sm:text-sm font-medium text-slate-700 mb-1">Descrizione / Note</label>
+                        <textarea id="doc-desc" rows="3" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none resize-none text-sm" placeholder="Dettagli aggiuntivi..."></textarea>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs sm:text-sm font-medium text-slate-700 mb-1">Tipologia *</label>
+                            <select id="doc-type" required class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none bg-white text-sm" onchange="syncDefaultDays()"></select>
+                        </div>
+                        <div>
+                            <label class="block text-xs sm:text-sm font-medium text-slate-700 mb-1">Giorni di Lavoro (Durata)</label>
+                            <input type="number" id="doc-workdays" required min="0.1" step="0.1" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none bg-white text-sm" placeholder="Es. 5 o 0.5">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs sm:text-sm font-medium text-slate-700 mb-1">Data Udienza/Scadenza *</label>
+                            <input type="date" id="doc-deadline" required class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs sm:text-sm font-medium text-slate-700 mb-1">Data Inizio Pianificata</label>
+                            <input type="date" id="doc-plan-date" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none bg-slate-50 text-sm">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs sm:text-sm font-medium text-slate-700 mb-1">Stato</label>
+                        <select id="doc-status" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none bg-white text-sm">
+                            <option value="todo">Da Fare</option><option value="in-progress">In Lavorazione</option><option value="done">Completato</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="px-4 sm:px-6 py-3 sm:py-4 border-t border-slate-200 bg-slate-50 flex justify-between items-center rounded-b-2xl sm:rounded-b-2xl pb-6 sm:pb-4">
+                <button type="button" id="btn-delete-doc" onclick="deleteCurrentDoc()" class="text-red-500 hover:bg-red-50 px-2 sm:px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors hidden"><i class="fas fa-trash-alt sm:mr-1"></i> <span class="hidden sm:inline">Elimina</span></button>
+                <div class="flex space-x-2 sm:space-x-3 ml-auto">
+                    <button type="button" onclick="closeDocModal()" class="px-3 sm:px-4 py-2 border border-slate-300 rounded-lg text-xs sm:text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-colors">Annulla</button>
+                    <button type="button" onclick="saveDocument()" class="px-3 sm:px-4 py-2 bg-brand-600 rounded-lg text-xs sm:text-sm font-medium text-white hover:bg-brand-700 shadow-sm transition-colors">Salva</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal (Tipi e Impegni) -->
+    <div id="settings-modal" class="modal-overlay fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-0">
+        <div class="modal-content bg-white w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="px-4 sm:px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+                <h3 class="text-base sm:text-lg font-bold text-slate-800"><i class="fas fa-cog mr-2 text-slate-500"></i> Impostazioni Generali</h3>
+                <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-slate-600 transition-colors"><i class="fas fa-times text-xl"></i></button>
+            </div>
+            
+            <div class="p-4 sm:p-6 overflow-y-auto flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Tipologie e Impostazioni Globali -->
+                <div>
+                    <h4 class="text-sm font-bold text-brand-700 mb-3 border-b border-brand-100 pb-2"><i class="fas fa-sliders-h mr-1"></i> Giorni Esclusi Globali</h4>
+                    
+                    <div class="mb-6 bg-slate-50 p-3 rounded-lg border border-slate-200 flex flex-col gap-2">
+                        <label class="flex items-center gap-2 cursor-pointer mb-1">
+                            <input type="checkbox" id="setting-exclude-sundays" class="rounded border-slate-300 text-brand-600 focus:ring-brand-500" onchange="toggleSetting('excludeSundays', this.checked)">
+                            <span class="text-xs font-semibold text-slate-700">Escludi le Domeniche</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer mb-1">
+                            <input type="checkbox" id="setting-exclude-saturdays" class="rounded border-slate-300 text-brand-600 focus:ring-brand-500" onchange="toggleSetting('excludeSaturdays', this.checked)">
+                            <span class="text-xs font-semibold text-slate-700">Escludi i Sabati</span>
+                        </label>
+                        <div class="w-full h-px bg-slate-200 my-1"></div>
+                        <label class="flex items-center gap-2 cursor-pointer mb-1">
+                            <input type="checkbox" id="setting-exclude-august" class="rounded border-slate-300 text-brand-600 focus:ring-brand-500" onchange="toggleSetting('excludeAugust', this.checked)">
+                            <span class="text-xs text-slate-700">Escludi Agosto (1-31 Ago)</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer mb-1">
+                            <input type="checkbox" id="setting-exclude-christmas" class="rounded border-slate-300 text-brand-600 focus:ring-brand-500" onchange="toggleSetting('excludeChristmas', this.checked)">
+                            <span class="text-xs text-slate-700">Escludi Vacanze di Natale (24 Dic - 6 Gen)</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer mb-1">
+                            <input type="checkbox" id="setting-exclude-easter" class="rounded border-slate-300 text-brand-600 focus:ring-brand-500" onchange="toggleSetting('excludeEaster', this.checked)">
+                            <span class="text-xs text-slate-700">Escludi Vacanze di Pasqua (da Gio. Santo a Martedì)</span>
+                        </label>
+                        
+                        <div class="w-full h-px bg-slate-200 my-1"></div>
+                        <label class="flex items-center gap-2 cursor-pointer mt-1">
+                            <input type="checkbox" id="setting-suspend-commitments" class="rounded border-slate-300 text-brand-600 focus:ring-brand-500" onchange="toggleSetting('suspendCommitments', this.checked)">
+                            <span class="text-xs font-semibold text-slate-700">Sospendi gli impegni ricorrenti (udienze) durante i periodi di ferie sopracitati</span>
+                        </label>
+                    </div>
+
+                    <h4 class="text-sm font-bold text-brand-700 mb-3 border-b border-brand-100 pb-2"><i class="fas fa-tags mr-1"></i> Tipologie e Giorni Lavoro</h4>
+                    <div class="mb-4 bg-slate-50 p-3 rounded-lg border border-slate-200 flex gap-2 items-center">
+                        <input type="text" id="new-type-name" class="flex-1 px-2 py-1.5 border border-slate-300 rounded focus:ring-2 focus:ring-brand-500 outline-none text-xs" placeholder="Nome nuova">
+                        <input type="number" id="new-type-days" class="w-16 px-2 py-1.5 border border-slate-300 rounded focus:ring-2 focus:ring-brand-500 outline-none text-xs" placeholder="GG" min="0.1" step="0.1" value="7" title="Giorni necessari">
+                        <input type="color" id="new-type-color" class="h-8 w-8 rounded cursor-pointer border border-slate-300 p-0.5" value="#3b82f6">
+                        <button onclick="addType()" class="bg-slate-800 text-white px-2 py-1.5 rounded hover:bg-slate-700 text-xs font-medium"><i class="fas fa-plus"></i></button>
+                    </div>
+                    
+                    <ul id="types-list-manager" class="space-y-2 text-xs"></ul>
+                </div>
+                
+                <!-- Impegni Indisponibilità -->
+                <div>
+                    <h4 class="text-sm font-bold text-orange-700 mb-3 border-b border-orange-100 pb-2"><i class="fas fa-ban mr-1"></i> Impegni Ricorrenti (Giorni Indisponibili)</h4>
+                    <p class="text-[10px] text-slate-500 mb-3 leading-tight">Puoi indicare "0" giorni di preparazione se vuoi bloccare solo il giorno dell'impegno. Scegli un colore per evidenziarlo in agenda.</p>
+                    <div class="mb-4 bg-orange-50 p-3 rounded-lg border border-orange-200 text-xs flex flex-col gap-2">
+                        <div class="flex gap-2">
+                            <input type="text" id="new-comm-name" class="flex-1 px-2 py-1.5 border border-slate-300 rounded focus:ring-2 focus:ring-orange-500 outline-none" placeholder="Nome Impegno (es. Udienza Penale)">
+                            <input type="color" id="new-comm-color" class="h-8 w-8 rounded cursor-pointer border border-slate-300 p-0.5" value="#f97316" title="Colore in Agenda">
+                        </div>
+                        <div class="flex gap-2">
+                            <select id="new-comm-week" class="flex-1 px-2 py-1.5 border border-slate-300 rounded">
+                                <option value="1">1° Settimana</option><option value="2">2° Settimana</option>
+                                <option value="3">3° Settimana</option><option value="4">4° Settimana</option><option value="5">5° Settimana</option>
+                            </select>
+                            <select id="new-comm-day" class="flex-1 px-2 py-1.5 border border-slate-300 rounded">
+                                <option value="1">Lunedì</option><option value="2">Martedì</option><option value="3">Mercoledì</option>
+                                <option value="4">Giovedì</option><option value="5">Venerdì</option>
+                            </select>
+                        </div>
+                        <div class="flex gap-2 items-center justify-between">
+                            <div class="flex items-center gap-1">
+                                <label class="text-[10px] text-slate-600">GG Preparazione:</label>
+                                <input type="number" id="new-comm-prep" class="w-12 px-2 py-1 border border-slate-300 rounded" value="0" min="0">
+                            </div>
+                            <button onclick="addCommitment()" class="bg-orange-600 text-white px-3 py-1.5 rounded hover:bg-orange-700 font-medium">Aggiungi</button>
+                        </div>
+                    </div>
+                    <ul id="commitments-list-manager" class="space-y-2 text-xs"></ul>
+                </div>
+            </div>
+            <div class="px-4 sm:px-6 py-4 border-t border-slate-200 bg-slate-50 flex justify-end">
+                <button type="button" onclick="closeSettingsModal()" class="px-4 py-2 bg-slate-800 rounded-lg text-sm font-medium text-white hover:bg-slate-900 shadow-sm transition-colors">Chiudi</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Modal -->
+    <div id="import-modal" class="modal-overlay fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-0">
+        <div class="modal-content bg-white w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+                <h3 class="text-base sm:text-lg font-bold text-slate-800">Importa Dati</h3>
+                <button onclick="closeImportModal()" class="text-slate-400 hover:text-slate-600 transition-colors"><i class="fas fa-times text-xl"></i></button>
+            </div>
+            <div class="p-4 sm:p-6 overflow-y-auto flex-1">
+                <div class="mb-4">
+                    <label class="block text-xs sm:text-sm font-medium text-slate-700 mb-1">Tipologia da assegnare *</label>
+                    <select id="import-type-select" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none bg-white text-xs sm:text-sm"></select>
+                </div>
+                <textarea id="import-text" rows="5" class="w-full px-3 py-2 font-mono text-xs sm:text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none resize-none bg-slate-50" placeholder="Incolla testo..."></textarea>
+                <div id="import-results" class="mt-4 hidden">
+                    <h4 class="font-semibold text-slate-700 text-sm mb-2 border-b pb-1">Trovati (<span id="import-count">0</span>)</h4>
+                    <ul id="import-preview-list" class="text-xs sm:text-sm space-y-1 max-h-32 sm:max-h-40 overflow-y-auto bg-slate-50 p-2 rounded border border-slate-200"></ul>
+                </div>
+            </div>
+            <div class="px-4 sm:px-6 py-3 sm:py-4 border-t border-slate-200 bg-slate-50 flex justify-between items-center rounded-b-2xl">
+                <button type="button" onclick="analyzeImportData()" class="px-3 sm:px-4 py-1.5 sm:py-2 border border-brand-300 rounded-lg text-xs font-medium text-brand-700 bg-brand-50 hover:bg-brand-100">Analizza</button>
+                <div class="flex space-x-2">
+                    <button type="button" onclick="closeImportModal()" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-medium text-slate-700 bg-white">Annulla</button>
+                    <button type="button" id="btn-confirm-import" onclick="executeImport()" disabled class="px-3 py-1.5 bg-brand-600 rounded-lg text-xs font-medium text-white disabled:opacity-50">Conferma</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast & Confirm Modals -->
+    <div id="toast" class="fixed bottom-4 right-4 sm:right-4 left-4 sm:left-auto bg-slate-800 text-white px-4 py-3 rounded-lg shadow-lg transform transition-all duration-300 translate-y-20 opacity-0 z-[70] pointer-events-none text-center sm:text-left text-sm">Messaggio</div>
+    
+    <div id="confirm-modal" class="modal-overlay fixed inset-0 z-[70] flex items-center justify-center p-4">
+        <div class="modal-content bg-white w-full max-w-sm rounded-xl shadow-2xl overflow-hidden flex flex-col">
+            <div class="p-5 text-center">
+                <div class="w-10 h-10 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center mx-auto mb-3"><i id="confirm-icon" class="fas fa-info-circle text-lg"></i></div>
+                <h3 class="text-base font-bold text-slate-800 mb-2" id="confirm-modal-title">Conferma</h3>
+                <p class="text-xs text-slate-600" id="confirm-modal-message">Sei sicuro?</p>
+            </div>
+            <div class="px-4 py-3 bg-slate-50 flex space-x-3 justify-end rounded-b-xl">
+                <button type="button" onclick="closeConfirmModal()" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-medium bg-white">Chiudi</button>
+                <button type="button" id="btn-confirm-action" class="px-3 py-1.5 bg-brand-600 rounded-lg text-xs font-medium text-white">Conferma</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- DATA STATE ---
+        let appSettings = JSON.parse(localStorage.getItem('planner_app_settings')) || { 
+            excludeSundays: true,
+            excludeSaturdays: true,
+            excludeAugust: true,
+            excludeChristmas: true,
+            excludeEaster: false,
+            suspendCommitments: true
+        };
+        
+        let dayOverrides = JSON.parse(localStorage.getItem('planner_day_overrides')) || {};
+        // Retrocompatibilità per manual exclusions
+        let oldManual = JSON.parse(localStorage.getItem('planner_manual_exclusions')) || [];
+        if (oldManual.length > 0 && Object.keys(dayOverrides).length === 0) {
+            oldManual.forEach(d => dayOverrides[d] = { type: 'exclude' });
+            localStorage.removeItem('planner_manual_exclusions');
+        }
+        
+        let documents = JSON.parse(localStorage.getItem('planner_docs')) || [];
+        let docTypes = JSON.parse(localStorage.getItem('planner_types')) || [
+            { id: 't1', name: 'Amministrazione', color: '#8b5cf6', defaultDays: 5 },
+            { id: 't2', name: 'Tecnico', color: '#10b981', defaultDays: 10 },
+            { id: 't3', name: 'Commerciale', color: '#f59e0b', defaultDays: 3 },
+            { id: 't4', name: 'Provvedimenti', color: '#ef4444', defaultDays: 7 }
+        ];
+        
+        let commitments = JSON.parse(localStorage.getItem('planner_commitments')) || [
+            { id: 'c1', name: 'Udienze Civili Collegiali', week: 1, day: 2, prepDays: 1, color: '#3b82f6' }, 
+            { id: 'c2', name: 'Udienze Civili Collegiali', week: 1, day: 4, prepDays: 1, color: '#3b82f6' },
+            { id: 'c3', name: 'Udienze Penali', week: 3, day: 4, prepDays: 0, color: '#ef4444' },            
+            { id: 'c4', name: 'Udienze Tributarie', week: 3, day: 5, prepDays: 0, color: '#eab308' },        
+            { id: 'c5', name: 'Udienze Monocratiche', week: 4, day: 3, prepDays: 0, color: '#8b5cf6' }       
+        ];
+
+        let activeTypeFilters = new Set(docTypes.map(t => t.id));
+        let isDeleteMode = false;
+        let selectedDocs = new Set();
+        let currentDate = new Date();
+        let currentView = 'kanban';
+        let currentSearchQuery = "";
+        let backupBeforeOptimize = null;
+
+        const generateId = () => Math.random().toString(36).substr(2, 9);
+        const getTodayString = () => { const d = new Date(); return getISO(d); };
+        const getISO = (d) => { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
+        window.onload = function() {
+            initSettingsUI();
+            updateViews();
+        };
+
+        // --- DRAG AND DROP GLOBALE ---
+        function drag(ev) {
+            ev.dataTransfer.setData("text/plain", ev.currentTarget.id);
+            setTimeout(() => ev.target.classList.add('opacity-50'), 0);
+        }
+
+        function dragCalendarEvent(ev, docId, eventType) {
+            ev.stopPropagation();
+            ev.dataTransfer.setData("text/calendar-event", JSON.stringify({ id: docId, type: eventType }));
+            setTimeout(() => ev.target.classList.add('opacity-50'), 0);
+        }
+
+        function dragCustomEvent(ev, dateStr) {
+            ev.stopPropagation();
+            ev.dataTransfer.setData("text/custom-event", dateStr);
+            setTimeout(() => ev.target.classList.add('opacity-50'), 0);
+        }
+
+        function dragEnd(ev) {
+            ev.target.classList.remove('opacity-50');
+        }
+
+        function allowDrop(ev) { ev.preventDefault(); }
+
+        // Drop sulla Kanban Board
+        function drop(ev, status) {
+            ev.preventDefault();
+            const dataStr = ev.dataTransfer.getData("text/plain");
+            if(dataStr && dataStr.startsWith('card-')) {
+                const id = dataStr.replace('card-', '');
+                const doc = documents.find(d => d.id === id);
+                if (doc && doc.status !== status) { doc.status = status; saveData(); updateViews(); }
+            }
+        }
+
+        // Drop sul Calendario
+        function dropOnCalendar(ev) {
+            ev.preventDefault();
+            
+            let cell = ev.target.closest('.calendar-day');
+            if (!cell) return;
+            
+            const targetDay = cell.getAttribute('data-date');
+            if (!targetDay) return;
+            
+            // 1. Spostamento Evento Calendario (Dovere / Inizio / Scadenza)
+            const calDataStr = ev.dataTransfer.getData("text/calendar-event");
+            if (calDataStr) {
+                try {
+                    const data = JSON.parse(calDataStr);
+                    const doc = documents.find(d => d.id === data.id);
+                    if (doc) {
+                        if (data.type === 'start') {
+                            doc.planDate = targetDay;
+                            showToast("Inizio previsto spostato al " + new Date(targetDay).toLocaleDateString('it-IT'));
+                        } else if (data.type === 'deadline') {
+                            let targetD = new Date(targetDay);
+                            targetD.setDate(targetD.getDate() - 60);
+                            doc.deadline = getISO(targetD);
+                            showToast("Scadenza e Udienza riprogrammate.");
+                        }
+                        saveData(); updateViews();
+                    }
+                } catch (e) {}
+                return;
+            }
+            
+            // 2. Spostamento Impegno Custom (Appuntamento singolo)
+            const customDataStr = ev.dataTransfer.getData("text/custom-event");
+            if (customDataStr) {
+                const oldDate = customDataStr;
+                if (oldDate !== targetDay && dayOverrides[oldDate]) {
+                    dayOverrides[targetDay] = dayOverrides[oldDate];
+                    delete dayOverrides[oldDate];
+                    saveData(); updateViews();
+                    showToast("Impegno spostato al " + new Date(targetDay).toLocaleDateString('it-IT'));
+                }
+                return;
+            }
+            
+            // 3. Spostamento Kanban Card -> Calendario
+            const kanbanData = ev.dataTransfer.getData("text/plain");
+            if (kanbanData && kanbanData.startsWith('card-')) {
+                const docId = kanbanData.replace('card-', '');
+                const doc = documents.find(d => d.id === docId);
+                if (doc) {
+                    doc.planDate = targetDay;
+                    saveData(); updateViews();
+                    showToast("Documento pianificato per il " + new Date(targetDay).toLocaleDateString('it-IT'));
+                }
+            }
+        }
+
+        // --- EASTER ALGORITHM ---
+        function getEaster(year) {
+            let a = year % 19; let b = Math.floor(year / 100); let c = year % 100;
+            let d = Math.floor(b / 4); let e = b % 4; let f = Math.floor((b + 8) / 25);
+            let g = Math.floor((b - f + 1) / 3); let h = (19 * a + b - d - g + 15) % 30;
+            let i = Math.floor(c / 4); let k = c % 4; let l = (32 + 2 * e + 2 * i - h - k) % 7;
+            let m = Math.floor((a + 11 * h + 22 * l) / 451); let n = h + l - 7 * m + 114;
+            let month = Math.floor(n / 31) - 1; let day = (n % 31) + 1;
+            return new Date(year, month, day);
+        }
+
+        function isEasterHoliday(d) {
+            let easter = getEaster(d.getFullYear());
+            let start = new Date(easter); start.setDate(easter.getDate() - 3); 
+            let end = new Date(easter); end.setDate(easter.getDate() + 2); 
+            return d >= start && d <= end;
+        }
+
+        // --- AVAILABILITY LOGIC ---
+        function getWeekOfMonth(date) {
+            const firstDay = new Date(date.getFullYear(), date.getMonth(), 1).getDay();
+            const offset = (firstDay === 0 ? 6 : firstDay - 1);
+            return Math.ceil((date.getDate() + offset) / 7);
+        }
+
+        function getDayStatus(d) {
+            const month = d.getMonth();
+            const date = d.getDate();
+            const dayOfWeek = d.getDay(); 
+            const dateStr = getISO(d);
+            
+            // 1. Overrides specifici del giorno
+            if (dayOverrides[dateStr]) {
+                const override = dayOverrides[dateStr];
+                if (override.type === 'exclude') return { available: false, type: 'manual', name: 'Escluso Manualmente' };
+                if (override.type === 'custom') return { available: false, type: 'custom', name: override.name, color: override.color || '#ef4444', isOverride: true, isoDate: dateStr };
+                if (override.type === 'force_available') return { available: true, isForced: true };
+            }
+            
+            // 2. Weekends
+            if (appSettings.excludeSundays && dayOfWeek === 0) return { available: false, type: 'weekend', name: 'Domenica' };
+            if (appSettings.excludeSaturdays && dayOfWeek === 6) return { available: false, type: 'weekend', name: 'Sabato' };
+
+            // 3. Holidays
+            if (appSettings.excludeAugust && month === 7) return { available: false, type: 'holiday', name: 'Ferie Agosto' };
+            if (appSettings.excludeChristmas && ((month === 11 && date >= 24) || (month === 0 && date <= 6))) return { available: false, type: 'holiday', name: 'Vacanze di Natale' };
+            if (appSettings.excludeEaster && isEasterHoliday(d)) return { available: false, type: 'holiday', name: 'Vacanze di Pasqua' };
+            
+            let isCurrentHolidayPeriod = (month === 7) || ((month === 11 && date >= 24) || (month === 0 && date <= 6)) || isEasterHoliday(d);
+
+            // 4. Commitments & Prep
+            const weekOfMonth = getWeekOfMonth(d);
+            for (let c of commitments) {
+                if (!appSettings.suspendCommitments || !isCurrentHolidayPeriod) {
+                    if (parseInt(c.week) === weekOfMonth && parseInt(c.day) === dayOfWeek) {
+                        return { available: false, type: 'commitment', name: c.name, color: c.color || '#f97316' };
+                    }
+                }
+                
+                if (c.prepDays > 0) {
+                    for (let p = 1; p <= c.prepDays; p++) {
+                        let futureDate = new Date(d);
+                        futureDate.setDate(d.getDate() + p);
+                        
+                        if (parseInt(c.week) === getWeekOfMonth(futureDate) && parseInt(c.day) === futureDate.getDay()) {
+                            let fMonth = futureDate.getMonth();
+                            let fDate = futureDate.getDate();
+                            
+                            let isFutureHolidayPeriod = (fMonth === 7) || ((fMonth === 11 && fDate >= 24) || (fMonth === 0 && fDate <= 6)) || isEasterHoliday(futureDate);
+                                                  
+                            if (appSettings.suspendCommitments && isFutureHolidayPeriod) continue;
+                            
+                            return { available: false, type: 'prep', name: 'Prep. ' + c.name, color: '#94a3b8' }; 
+                        }
+                    }
+                }
+            }
+            return { available: true };
+        }
+
+        function isDayAvailable(d) {
+            return getDayStatus(d).available;
+        }
+
+        // --- GESTIONE GIORNO SPECIFICO (MODAL) ---
+        function openDayModal(isoDate) {
+            document.getElementById('day-modal-date').value = isoDate;
+            let d = new Date(isoDate);
+            document.getElementById('day-modal-title').textContent = d.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+            
+            const currentStatus = getDayStatus(d);
+            const statusDiv = document.getElementById('day-modal-status');
+            
+            if (currentStatus.available) {
+                statusDiv.innerHTML = `<span class="text-green-600 font-bold"><i class="fas fa-check-circle"></i> Disponibile (Lavorativo)</span>`;
+            } else {
+                statusDiv.innerHTML = `<span class="font-bold" style="color: ${currentStatus.color || '#ef4444'}"><i class="fas fa-ban"></i> Indisponibile: ${currentStatus.name}</span>`;
+            }
+
+            const actionsDiv = document.getElementById('day-modal-actions');
+            actionsDiv.innerHTML = '';
+            
+            if (dayOverrides[isoDate]) {
+                actionsDiv.innerHTML += `<button onclick="clearDayOverride('${isoDate}')" class="w-full py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded text-xs font-medium transition-colors"><i class="fas fa-undo mr-1"></i> Ripristina regole base del calendario</button>`;
+            }
+            
+            if (currentStatus.available) {
+                actionsDiv.innerHTML += `<button onclick="setDayOverride('${isoDate}', 'exclude')" class="w-full py-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded text-xs font-medium transition-colors"><i class="fas fa-times-circle mr-1"></i> Escludi dal lavoro</button>`;
+            } else {
+                if (!dayOverrides[isoDate] || dayOverrides[isoDate].type !== 'force_available') {
+                    actionsDiv.innerHTML += `<button onclick="setDayOverride('${isoDate}', 'force_available')" class="w-full py-2 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 rounded text-xs font-medium transition-colors"><i class="fas fa-check-circle mr-1"></i> Forza come Lavorativo</button>`;
+                }
+            }
+            
+            actionsDiv.innerHTML += `<button onclick="toggleCustomForm()" class="w-full py-2 bg-brand-50 hover:bg-brand-100 text-brand-700 border border-brand-200 rounded text-xs font-medium transition-colors"><i class="fas fa-pen mr-1"></i> Scrivi impegno specifico...</button>`;
+            
+            document.getElementById('day-modal-custom-form').classList.add('hidden');
+            document.getElementById('day-modal-custom-name').value = '';
+            document.getElementById('day-modal').classList.add('active');
+        }
+
+        function closeDayModal() {
+            document.getElementById('day-modal').classList.remove('active');
+        }
+
+        function toggleCustomForm() {
+            document.getElementById('day-modal-custom-form').classList.toggle('hidden');
+            document.getElementById('day-modal-custom-name').focus();
+        }
+
+        function setDayOverride(isoDate, type, name = null, color = null) {
+            dayOverrides[isoDate] = { type, name, color };
+            saveData();
+            updateViews();
+            closeDayModal();
+            showToast("Giorno aggiornato.");
+        }
+
+        function clearDayOverride(isoDate) {
+            delete dayOverrides[isoDate];
+            saveData();
+            updateViews();
+            closeDayModal();
+            showToast("Regole ripristinate.");
+        }
+
+        function saveCustomDay() {
+            const isoDate = document.getElementById('day-modal-date').value;
+            const name = document.getElementById('day-modal-custom-name').value.trim();
+            const color = document.getElementById('day-modal-custom-color').value;
+            if (!name) return;
+            setDayOverride(isoDate, 'custom', name, color);
+        }
+
+        // --- OPTIMIZATION SCHEDULER & RESET ---
+        function resetPlanDates() {
+            openConfirmModal("Reset Date di Inizio", "Vuoi ricalcolare la data di inizio di tutti i documenti partendo dall'udienza e sottraendo i giorni di lavoro necessari (escludendo i giorni occupati)?", () => {
+                documents.forEach(doc => {
+                    if (doc.status === 'done') return;
+                    const [y, m, d] = doc.deadline.split('-');
+                    let targetDate = new Date(y, m - 1, d);
+                    
+                    let requiredDays = Math.ceil(parseFloat(doc.workDays) || parseFloat(getTypeById(doc.typeId).defaultDays) || 1.0);
+                    let daysSubtracted = 0;
+                    let runnerDate = new Date(targetDate);
+                    
+                    while (daysSubtracted < requiredDays) {
+                        runnerDate.setDate(runnerDate.getDate() - 1);
+                        if (isDayAvailable(runnerDate)) {
+                            daysSubtracted++;
+                        }
+                    }
+                    doc.planDate = getISO(runnerDate);
+                });
+                saveData(); updateViews();
+                document.getElementById('btn-undo-optimize').classList.add('hidden');
+                showToast("Date ripristinate secondo le regole base.");
+            }, 'fa-calendar-times', 'bg-slate-100');
+        }
+
+        function optimizeSchedule() {
+            backupBeforeOptimize = JSON.parse(JSON.stringify(documents));
+            
+            let activeDocs = documents.filter(d => d.status !== 'done').sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
+            if (activeDocs.length === 0) return showToast("Nessun documento attivo da ottimizzare.");
+            
+            let updatedCount = 0;
+            let today = new Date();
+            today.setHours(0,0,0,0);
+            
+            let simulationDate = new Date(today);
+            let currentDayCapacity = 1.0; 
+            
+            let trueCatchupDate = null; // Tieni traccia dell'ultimo giorno in cui si consegna in ritardo
+
+            activeDocs.forEach(doc => {
+                let requiredDays = parseFloat(doc.workDays) || parseFloat(getTypeById(doc.typeId).defaultDays) || 1.0;
+                
+                while (currentDayCapacity <= 0.01 || !isDayAvailable(simulationDate)) {
+                    if (currentDayCapacity <= 0.01) {
+                        simulationDate.setDate(simulationDate.getDate() + 1);
+                        currentDayCapacity = 1.0;
+                    }
+                    while (!isDayAvailable(simulationDate)) {
+                        simulationDate.setDate(simulationDate.getDate() + 1);
+                    }
+                }
+                
+                const planStr = getISO(simulationDate);
+                if (doc.planDate !== planStr) {
+                    doc.planDate = planStr;
+                    updatedCount++;
+                }
+
+                while (requiredDays > 0) {
+                    if (requiredDays <= currentDayCapacity) {
+                        currentDayCapacity -= requiredDays;
+                        requiredDays = 0;
+                    } else {
+                        requiredDays -= currentDayCapacity;
+                        simulationDate.setDate(simulationDate.getDate() + 1);
+                        currentDayCapacity = 1.0;
+                        while (!isDayAvailable(simulationDate)) {
+                            simulationDate.setDate(simulationDate.getDate() + 1);
+                        }
+                    }
+                }
+                
+                // CALCOLO VERO RIENTRO IN PARI
+                const [y, m, d] = doc.deadline.split('-');
+                let scadenzaDate = new Date(y, m - 1, d);
+                scadenzaDate.setDate(scadenzaDate.getDate() + 60);
+                scadenzaDate.setHours(0,0,0,0);
+
+                // Se la data in cui finisco di scriverlo (simulationDate) è oltre la scadenza...
+                if (simulationDate > scadenzaDate) {
+                    trueCatchupDate = new Date(simulationDate);
+                }
+            });
+
+            if (updatedCount > 0) {
+                saveData(); updateViews();
+                document.getElementById('btn-undo-optimize').classList.remove('hidden');
+            }
+            
+            let msg = updatedCount > 0 ? `Riassegnate ${updatedCount} scadenze.\n\n` : `L'agenda è già ottimizzata, nessuna data spostata.\n\n`;
+            
+            if (trueCatchupDate) {
+                let catchupStr = trueCatchupDate.toLocaleDateString('it-IT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+                msg += `📍 Mettendo in fila tutto il lavoro, finirai l'ultimo procedimento in ritardo (uscendo definitivamente dall'emergenza) in data:\n\n**${catchupStr}**\n\nDa questo giorno in poi lavorerai solo su scadenze future.`;
+            } else {
+                msg += `🎉 L'agenda è perfettamente in pari! Nessun procedimento sarà completato oltre la sua scadenza massima.`;
+            }
+
+            openConfirmModal("Ottimizzazione Agenda", msg, null, 'fa-magic text-brand-600', 'bg-brand-100');
+        }
+
+        function undoOptimize() {
+            if (backupBeforeOptimize) {
+                documents = JSON.parse(JSON.stringify(backupBeforeOptimize));
+                backupBeforeOptimize = null;
+                saveData(); updateViews();
+                document.getElementById('btn-undo-optimize').classList.add('hidden');
+                showToast("Ottimizzazione annullata.");
+            }
+        }
+
+        // --- GENERAL HELPERS ---
+        function toggleMobileMenu() {
+            document.getElementById('sidebar-menu').classList.toggle('-translate-x-full');
+            document.getElementById('mobile-overlay').classList.toggle('hidden');
+        }
+
+        function syncSearch(val) {
+            currentSearchQuery = val.toLowerCase();
+            document.getElementById('search-input-mobile').value = val;
+            document.getElementById('search-input-desktop').value = val;
+            updateViews();
+        }
+
+        function saveData() {
+            localStorage.setItem('planner_app_settings', JSON.stringify(appSettings));
+            localStorage.setItem('planner_day_overrides', JSON.stringify(dayOverrides));
+            localStorage.setItem('planner_docs', JSON.stringify(documents));
+            localStorage.setItem('planner_types', JSON.stringify(docTypes));
+            localStorage.setItem('planner_commitments', JSON.stringify(commitments));
+        }
+
+        function getTypeById(id) { return docTypes.find(t => t.id === id) || { name: 'Sconosciuto', color: '#94a3b8', defaultDays: 7 }; }
+
+        function calculateDaysRemaining(dateStr) {
+            if (!dateStr) return 999;
+            const today = new Date(); today.setHours(0,0,0,0);
+            return Math.ceil((new Date(dateStr) - today) / (1000 * 60 * 60 * 24));
+        }
+
+        function isDocInDateRange(doc) {
+            const filterType = document.getElementById('date-filter-type').value;
+            const startVal = document.getElementById('date-filter-start').value;
+            const endVal = document.getElementById('date-filter-end').value;
+            if (!startVal && !endVal) return true; 
+            
+            const [y, m, d] = doc.deadline.split('-');
+            let targetDate = new Date(y, m - 1, d);
+            if (filterType === 'scadenza') targetDate.setDate(targetDate.getDate() + 60);
+            targetDate.setHours(0,0,0,0);
+            
+            if (startVal && targetDate < new Date(startVal).setHours(0,0,0,0)) return false;
+            if (endVal && targetDate > new Date(endVal).setHours(0,0,0,0)) return false;
+            return true;
+        }
+
+        function showToast(msg, isErr = false) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.className = `fixed bottom-4 right-4 sm:right-4 left-4 sm:left-auto px-4 py-3 rounded-lg shadow-lg transform transition-all duration-300 z-[70] text-sm font-medium ${isErr ? 'bg-red-600' : 'bg-slate-800'} text-white`;
+            setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 3000);
+        }
+
+        function getDeadlineColorClass(daysLeft) {
+            if (daysLeft < 0) return "bg-red-600 text-white";
+            if (daysLeft <= 7) return "bg-orange-500 text-white";
+            return "bg-emerald-500 text-white";
+        }
+
+        // --- UI RENDERING (KANBAN & VIEWS) ---
+        function switchView(viewName) {
+            currentView = viewName;
+            ['kanban', 'calendar', 'priority'].forEach(v => {
+                document.getElementById(`view-${v}`).classList.add('hidden');
+                document.getElementById(`view-${v}`).classList.remove('flex');
+                document.getElementById(`btn-view-${v}`).className = "px-3 py-1.5 rounded text-slate-500 hover:text-slate-700 font-medium text-xs sm:text-sm transition-colors whitespace-nowrap";
+            });
+            document.getElementById(`view-${viewName}`).classList.remove('hidden');
+            document.getElementById(`view-${viewName}`).classList.add('flex');
+            document.getElementById(`btn-view-${viewName}`).className = "px-3 py-1.5 rounded bg-slate-100 text-slate-700 font-medium text-xs sm:text-sm shadow-sm transition-colors whitespace-nowrap";
+            updateViews();
+        }
+
+        function updateViews() {
+            if (currentView === 'kanban') renderKanban();
+            if (currentView === 'calendar') renderCalendar();
+            if (currentView === 'priority') renderPriorityList();
+        }
+
+        function renderKanban() {
+            const cols = { todo: document.getElementById('col-todo'), 'in-progress': document.getElementById('col-in-progress'), done: document.getElementById('col-done') };
+            Object.values(cols).forEach(col => col.innerHTML = '');
+            let count = { todo: 0, 'in-progress': 0, done: 0 };
+            let visibleDocsCount = 0;
+
+            const showOverdue = document.getElementById('filter-overdue').checked;
+            const showSoon = document.getElementById('filter-soon').checked;
+            const showOk = document.getElementById('filter-ok').checked;
+
+            documents.forEach(doc => {
+                if (currentSearchQuery && !doc.title.toLowerCase().includes(currentSearchQuery) && !(doc.description && doc.description.toLowerCase().includes(currentSearchQuery))) return;
+                if (!activeTypeFilters.has(doc.typeId)) return;
+                if (!isDocInDateRange(doc)) return;
+
+                const [year, month, day] = doc.deadline.split('-');
+                let udienzaDate = new Date(year, month - 1, day);
+                let scadenzaDate = new Date(year, month - 1, day);
+                scadenzaDate.setDate(scadenzaDate.getDate() + 60);
+                
+                const scadenzaStrISO = getISO(scadenzaDate);
+                const urgencyDaysLeft = calculateDaysRemaining(doc.planDate || scadenzaStrISO);
+
+                if (doc.status !== 'done') {
+                    if (urgencyDaysLeft < 0 && !showOverdue) return;
+                    if (urgencyDaysLeft >= 0 && urgencyDaysLeft <= 7 && !showSoon) return;
+                    if (urgencyDaysLeft > 7 && !showOk) return;
+                }
+
+                visibleDocsCount++; count[doc.status]++;
+                const typeObj = getTypeById(doc.typeId);
+                
+                const clickAction = isDeleteMode ? `toggleDocSelection(event, '${doc.id}')` : `openDocModal('${doc.id}')`;
+                const ringClass = selectedDocs.has(doc.id) ? 'ring-2 ring-red-500' : '';
+                
+                let customDaysHtml = doc.workDays ? `<span class="text-[9px] bg-slate-100 px-1 rounded border border-slate-200" title="Giorni di Lavoro"><i class="fas fa-hourglass-half"></i> ${doc.workDays}gg</span>` : '';
+
+                cols[doc.status].insertAdjacentHTML('beforeend', `
+                    <div id="card-${doc.id}" draggable="true" ondragstart="drag(event)" ondragend="dragEnd(event)" class="doc-card bg-white rounded-xl border border-slate-200 shadow-sm relative group select-none p-3 sm:p-4 ${ringClass} ${isDeleteMode ? 'cursor-default pl-8' : 'cursor-pointer'}" onclick="${clickAction}">
+                        ${isDeleteMode ? `<div class="absolute top-3 left-3 z-10" onclick="event.stopPropagation()"><input type="checkbox" id="chk-${doc.id}" class="w-4 h-4" ${selectedDocs.has(doc.id) ? 'checked' : ''} onclick="toggleDocSelection(event, '${doc.id}')"></div>` : ''}
+                        <div class="flex justify-between items-start mb-2">
+                            <div class="flex items-center gap-1.5"><div class="w-2.5 h-2.5 rounded-full" style="background-color: ${typeObj.color}"></div><span class="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase">${typeObj.name}</span></div>
+                            ${customDaysHtml}
+                        </div>
+                        <h4 class="font-bold text-slate-800 text-sm leading-tight">${doc.title}</h4>
+                        <div class="mt-1.5 inline-block bg-indigo-50 px-1.5 py-0.5 rounded text-[9px] sm:text-[10px] text-indigo-700 border border-indigo-100"><i class="fas fa-gavel mr-1"></i>Udienza: <b>${udienzaDate.toLocaleDateString('it-IT')}</b></div>
+                        ${doc.planDate ? `<div class="text-[10px] text-slate-500 mt-2"><i class="fas fa-play text-[8px] mr-1"></i>Inizio prev.: ${new Date(doc.planDate).toLocaleDateString('it-IT')}</div>` : ''}
+                    </div>
+                `);
+            });
+            document.getElementById('count-todo').textContent = count.todo;
+            document.getElementById('count-in-progress').textContent = count['in-progress'];
+            document.getElementById('count-done').textContent = count.done;
+            document.getElementById('total-docs-count').textContent = visibleDocsCount;
+        }
+
+        function renderCalendar() {
+            if (currentView !== 'calendar') return;
+            const daysContainer = document.getElementById('calendar-days');
+            daysContainer.innerHTML = '';
+            const year = currentDate.getFullYear(); const month = currentDate.getMonth();
+            const firstDay = new Date(year, month, 1).getDay();
+            const lastDay = new Date(year, month + 1, 0).getDate();
+            const today = new Date();
+            
+            document.getElementById('current-month-display').textContent = new Date(year, month, 1).toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
+
+            let offset = (firstDay === 0 ? 6 : firstDay - 1);
+            for (let i = 0; i < offset; i++) daysContainer.insertAdjacentHTML('beforeend', `<div class="calendar-day other-month"></div>`);
+            
+            const visibleDocs = documents.filter(doc => {
+                if (currentSearchQuery && !doc.title.toLowerCase().includes(currentSearchQuery)) return false;
+                if (!activeTypeFilters.has(doc.typeId)) return false;
+                if (!isDocInDateRange(doc)) return false;
+                return true;
+            });
+            const eventsByDate = {};
+            visibleDocs.forEach(doc => {
+                if (doc.deadline) {
+                    const [y, m, d] = doc.deadline.split('-');
+                    let scad = new Date(y, m - 1, d);
+                    scad.setDate(scad.getDate() + 60);
+                    const scadStr = getISO(scad);
+                    if (!eventsByDate[scadStr]) eventsByDate[scadStr] = [];
+                    eventsByDate[scadStr].push({ type: 'deadline', doc: doc, daysLeft: calculateDaysRemaining(scadStr) });
+                }
+                if (doc.planDate && doc.status !== 'done') {
+                    if (!eventsByDate[doc.planDate]) eventsByDate[doc.planDate] = [];
+                    eventsByDate[doc.planDate].push({ type: 'start', doc: doc, daysLeft: calculateDaysRemaining(doc.planDate) });
+                }
+            });
+
+            for (let i = 1; i <= lastDay; i++) {
+                const curD = new Date(year, month, i);
+                const isToday = i === today.getDate() && month === today.getMonth() && year === today.getFullYear();
+                
+                const status = getDayStatus(curD);
+                const isoDate = getISO(curD);
+                
+                const div = document.createElement('div');
+                let bgStyle = '';
+                let extraClasses = '';
+                
+                if (!status.available) {
+                    if (status.type === 'commitment' || status.type === 'prep' || status.type === 'custom') {
+                        bgStyle = `background-color: ${status.color}20; border-color: ${status.color}60;`;
+                    } else if (status.type === 'manual') {
+                        extraClasses = 'manual-excluded';
+                    } else {
+                        extraClasses = 'unavailable';
+                    }
+                } else {
+                    if (status.isForced) {
+                        extraClasses = 'force-available hover:bg-green-100';
+                    } else {
+                        extraClasses = 'hover:bg-slate-50';
+                    }
+                }
+                
+                div.className = `calendar-day flex flex-col transition-colors ${isToday ? 'today' : ''} ${extraClasses}`;
+                if (bgStyle) div.style = bgStyle;
+                
+                div.setAttribute('data-date', isoDate);
+                div.setAttribute('ondragover', 'allowDrop(event)');
+                div.setAttribute('ondrop', 'dropOnCalendar(event)');
+                
+                div.onclick = () => openDayModal(isoDate);
+                
+                let reasonHtml = '';
+                if (!status.available) {
+                    if (status.type === 'custom' && status.isOverride) {
+                        reasonHtml = `<div draggable="true" ondragstart="dragCustomEvent(event, '${status.isoDate}')" ondragend="dragEnd(event)" class="text-[9px] leading-tight mt-1 px-1 py-0.5 rounded font-bold shadow-sm cursor-move flex items-center justify-between bg-white" style="color:${status.color}; border: 1px solid ${status.color}50;" title="Trascina per spostare o clicca per modificare" onclick="event.stopPropagation(); openDayModal('${isoDate}')"><span class="truncate">${status.name}</span><i class="fas fa-arrows-alt text-[7px] ml-1 opacity-50"></i></div>`;
+                    } else {
+                        let reasonColor = (status.type === 'commitment' || status.type === 'prep') ? status.color : '#94a3b8';
+                        if (status.type === 'manual') reasonColor = '#ef4444';
+                        reasonHtml = `<div class="text-[9px] leading-tight mt-1 px-1 rounded font-semibold" style="color:${reasonColor};" title="${status.name}">${status.name}</div>`;
+                    }
+                }
+                
+                const events = eventsByDate[isoDate] || [];
+                let eventsHtml = `<div class="flex-1 overflow-y-auto space-y-1 hide-scrollbar mt-1">`;
+                events.sort((a, b) => (a.type === 'deadline' ? -1 : 1));
+                events.forEach(ev => {
+                    let badgeClass = "", iconClass = "";
+                    if (ev.doc.status === 'done') { badgeClass = "bg-slate-300 text-slate-600"; iconClass = "fa-check"; }
+                    else if (ev.type === 'deadline') {
+                        badgeClass = getDeadlineColorClass(ev.daysLeft) + " cursor-move";
+                        iconClass = "fa-exclamation-circle";
+                    }
+                    else if (ev.type === 'start') {
+                        badgeClass = "bg-sky-300 text-slate-800 cursor-move shadow-sm border border-sky-400";
+                        iconClass = "fa-play";
+                    }
+                    eventsHtml += `<div draggable="true" ondragstart="dragCalendarEvent(event, '${ev.doc.id}', '${ev.type}')" ondragend="dragEnd(event)" class="cal-event ${badgeClass} transition-colors text-[9px] sm:text-[10px] px-1 sm:px-2 py-0.5 flex justify-between items-center" title="${ev.doc.title}" onclick="event.stopPropagation(); openDocModal('${ev.doc.id}')"><span class="truncate"><i class="fas ${iconClass} mr-1 text-[7px] sm:text-[8px]"></i>${ev.doc.title}</span></div>`;
+                });
+                eventsHtml += `</div>`;
+                
+                div.innerHTML = `<div class="text-right text-[10px] sm:text-xs font-bold mb-1 ${isToday ? 'text-brand-600' : 'text-slate-500'} pointer-events-none">${i}</div>${reasonHtml}${eventsHtml}`;
+                daysContainer.appendChild(div);
+            }
+        }
+        function changeMonth(delta) { currentDate.setMonth(currentDate.getMonth() + delta); renderCalendar(); }
+        function resetMonth() { currentDate = new Date(); renderCalendar(); }
+
+        function renderPriorityList() {
+            const tbody = document.getElementById('priority-list-body');
+            tbody.innerHTML = '';
+            
+            let priorityDocs = documents.filter(d => d.status !== 'done').map(d => {
+                const [y, m, day] = d.deadline.split('-');
+                let scad = new Date(y, m - 1, day);
+                scad.setDate(scad.getDate() + 60);
+                let scadISO = getISO(scad);
+                return { ...d, scadenzaISO: scadISO, daysLeft: calculateDaysRemaining(scadISO) };
+            }).filter(d => {
+                if (currentSearchQuery && !d.title.toLowerCase().includes(currentSearchQuery) && !(d.description && d.description.toLowerCase().includes(currentSearchQuery))) return false;
+                if (!activeTypeFilters.has(d.typeId)) return false;
+                if (!isDocInDateRange(d)) return false;
+                
+                const showOverdue = document.getElementById('filter-overdue').checked;
+                const showSoon = document.getElementById('filter-soon').checked;
+                const showOk = document.getElementById('filter-ok').checked;
+                
+                if (d.daysLeft < 0 && !showOverdue) return false;
+                if (d.daysLeft >= 0 && d.daysLeft <= 7 && !showSoon) return false;
+                if (d.daysLeft > 7 && !showOk) return false;
+                return true;
+            }).sort((a, b) => a.daysLeft - b.daysLeft);
+
+            if (priorityDocs.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">Nessun documento attivo.</td></tr>`;
+                return;
+            }
+
+            priorityDocs.forEach(doc => {
+                const typeObj = getTypeById(doc.typeId);
+                const planStr = doc.planDate ? new Date(doc.planDate).toLocaleDateString('it-IT') : '-';
+                
+                let urgencyText = ""; 
+                let urgencyClass = "text-slate-600";
+                if (doc.daysLeft < 0) { urgencyText = `(Ritardo di ${Math.abs(doc.daysLeft)} gg)`; urgencyClass = "text-red-600 font-bold"; }
+                else if (doc.daysLeft === 0) { urgencyText = `(Oggi)`; urgencyClass = "text-red-600 font-bold"; }
+                else if (doc.daysLeft <= 7) { urgencyText = `(${doc.daysLeft} gg rimasti)`; urgencyClass = "text-orange-600 font-semibold"; }
+                else { urgencyText = `(${doc.daysLeft} gg)`; }
+
+                let badgeHtml = `<span class="px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-medium ${doc.daysLeft < 0 ? 'bg-red-100 text-red-700' : (doc.daysLeft <= 7 ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700')}">${doc.daysLeft < 0 ? 'SCADUTO' : (doc.daysLeft <= 7 ? 'IN SCADENZA' : 'OK')}</span>`;
+
+                tbody.insertAdjacentHTML('beforeend', `
+                    <tr class="bg-white border-b hover:bg-slate-50">
+                        <td class="px-2 sm:px-4 py-3">${badgeHtml}</td>
+                        <td class="px-2 sm:px-4 py-3 font-medium text-xs sm:text-sm text-slate-900">
+                            ${doc.title}
+                            <div class="text-[10px] sm:text-xs font-normal ${urgencyClass} mt-0.5">${urgencyText}</div>
+                        </td>
+                        <td class="px-2 sm:px-4 py-3 text-xs sm:text-sm"><span style="color:${typeObj.color}">●</span> ${typeObj.name}</td>
+                        <td class="px-2 sm:px-4 py-3 text-xs sm:text-sm">${new Date(doc.scadenzaISO).toLocaleDateString('it-IT')}</td>
+                        <td class="px-2 sm:px-4 py-3 text-xs sm:text-sm text-slate-500">${planStr}</td>
+                        <td class="px-2 sm:px-4 py-3 text-right"><button onclick="openDocModal('${doc.id}')" class="text-brand-600 border border-brand-200 hover:bg-brand-50 px-2 py-1 rounded transition-colors"><i class="fas fa-edit"></i></button></td>
+                    </tr>
+                `);
+            });
+        }
+
+        // --- DOC MODAL & LOGIC ---
+        function openDocModal(docId = null) {
+            const form = document.getElementById('doc-form'); form.reset();
+            document.getElementById('doc-modal-title').textContent = docId ? 'Modifica Documento' : 'Nuovo Documento';
+            document.getElementById('btn-delete-doc').classList.toggle('hidden', !docId);
+            
+            const typeSelect = document.getElementById('doc-type');
+            typeSelect.innerHTML = '<option value="" disabled selected>Seleziona tipologia...</option>';
+            docTypes.forEach(t => typeSelect.appendChild(Object.assign(document.createElement('option'), { value: t.id, textContent: t.name })));
+
+            if (docId) {
+                const doc = documents.find(d => d.id === docId);
+                if (doc) {
+                    document.getElementById('doc-id').value = doc.id;
+                    document.getElementById('doc-title').value = doc.title;
+                    document.getElementById('doc-desc').value = doc.description || '';
+                    document.getElementById('doc-type').value = doc.typeId;
+                    document.getElementById('doc-workdays').value = doc.workDays || getTypeById(doc.typeId).defaultDays;
+                    document.getElementById('doc-status').value = doc.status;
+                    document.getElementById('doc-deadline').value = doc.deadline;
+                    document.getElementById('doc-plan-date').value = doc.planDate || '';
+                }
+            } else {
+                document.getElementById('doc-deadline').value = getTodayString();
+            }
+            document.getElementById('doc-modal').classList.add('active');
+        }
+
+        function syncDefaultDays() {
+            const typeId = document.getElementById('doc-type').value;
+            if (typeId) document.getElementById('doc-workdays').value = getTypeById(typeId).defaultDays;
+        }
+        function closeDocModal() { document.getElementById('doc-modal').classList.remove('active'); }
+
+        function saveDocument() {
+            if (!document.getElementById('doc-form').checkValidity()) return document.getElementById('doc-form').reportValidity();
+            const id = document.getElementById('doc-id').value;
+            const docData = {
+                title: document.getElementById('doc-title').value.trim(),
+                description: document.getElementById('doc-desc').value.trim(),
+                typeId: document.getElementById('doc-type').value,
+                workDays: document.getElementById('doc-workdays').value,
+                status: document.getElementById('doc-status').value,
+                deadline: document.getElementById('doc-deadline').value,
+                planDate: document.getElementById('doc-plan-date').value || document.getElementById('doc-deadline').value
+            };
+
+            if (id) {
+                const idx = documents.findIndex(d => d.id === id);
+                if (idx !== -1) documents[idx] = { ...documents[idx], ...docData };
+            } else {
+                docData.id = 'doc_' + generateId();
+                documents.push(docData);
+            }
+            saveData(); closeDocModal(); updateViews();
+        }
+
+        function deleteCurrentDoc() {
+            const id = document.getElementById('doc-id').value;
+            if (id) openConfirmModal("Elimina Documento", "Eliminare definitivamente?", () => {
+                documents = documents.filter(d => d.id !== id);
+                saveData(); closeDocModal(); updateViews(); showToast("Eliminato.");
+            });
+        }
+
+        // --- SETTINGS (Tipi e Impegni) ---
+        function openSettingsModal() { initSettingsUI(); document.getElementById('settings-modal').classList.add('active'); }
+        function closeSettingsModal() { document.getElementById('settings-modal').classList.remove('active'); updateViews(); }
+
+        function toggleSetting(key, val) {
+            appSettings[key] = val;
+            saveData();
+        }
+
+        function initSettingsUI() {
+            // Global Settings
+            document.getElementById('setting-exclude-sundays').checked = appSettings.excludeSundays;
+            document.getElementById('setting-exclude-saturdays').checked = appSettings.excludeSaturdays;
+            document.getElementById('setting-exclude-august').checked = appSettings.excludeAugust;
+            document.getElementById('setting-exclude-christmas').checked = appSettings.excludeChristmas;
+            document.getElementById('setting-exclude-easter').checked = appSettings.excludeEaster;
+            document.getElementById('setting-suspend-commitments').checked = appSettings.suspendCommitments;
+
+            // Tipi sidebar (bacheca)
+            const filterContainer = document.getElementById('filter-types-list');
+            filterContainer.innerHTML = '';
+            docTypes.forEach(t => filterContainer.insertAdjacentHTML('beforeend', `<label class="flex items-center gap-2 cursor-pointer group"><input type="checkbox" value="${t.id}" class="rounded" ${activeTypeFilters.has(t.id)?'checked':''} onchange="toggleTypeFilter('${t.id}')"><div class="w-3 h-3 rounded-full" style="background-color: ${t.color}"></div><span class="text-xs sm:text-sm text-slate-600">${t.name}</span></label>`));
+            
+            // Manager Tipi
+            const tm = document.getElementById('types-list-manager'); tm.innerHTML = '';
+            docTypes.forEach(t => {
+                const inUse = documents.some(d => d.typeId === t.id);
+                tm.insertAdjacentHTML('beforeend', `<li class="flex justify-between items-center bg-white p-2 border border-slate-200 rounded">
+                    <div class="flex items-center gap-2">
+                        <div class="w-3 h-3 rounded-full flex-shrink-0" style="background-color: ${t.color}"></div> 
+                        <input type="text" value="${t.name}" onchange="updateType('${t.id}', 'name', this.value)" class="text-xs font-semibold text-slate-700 bg-transparent border-b border-slate-300 outline-none w-24 sm:w-32"> 
+                        <input type="number" value="${t.defaultDays}" onchange="updateType('${t.id}', 'defaultDays', this.value)" class="text-xs border border-slate-300 rounded w-16 p-1 text-center" title="Giorni necessari" min="0.1" step="0.1">
+                        <span class="text-[10px] text-slate-500">gg</span>
+                    </div>
+                    <button onclick="deleteType('${t.id}')" class="text-slate-400 hover:text-red-500" ${inUse?'disabled style="opacity:0.3"':''}><i class="fas fa-trash-alt"></i></button>
+                </li>`);
+            });
+
+            // Manager Impegni
+            const cm = document.getElementById('commitments-list-manager'); cm.innerHTML = '';
+            
+            commitments.forEach(c => {
+                cm.insertAdjacentHTML('beforeend', `<li class="bg-white p-2 border border-slate-200 rounded flex flex-col gap-2">
+                    <div class="flex justify-between items-center">
+                        <input type="color" value="${c.color || '#f97316'}" onchange="updateCommitment('${c.id}', 'color', this.value)" class="h-6 w-6 rounded cursor-pointer border border-slate-300 p-0 mr-2 flex-shrink-0" title="Colore in Agenda">
+                        <input type="text" value="${c.name}" onchange="updateCommitment('${c.id}', 'name', this.value)" class="text-xs font-semibold text-slate-700 bg-transparent border-b border-slate-300 outline-none w-full mr-2">
+                        <button onclick="deleteCommitment('${c.id}')" class="text-slate-400 hover:text-red-500 p-1"><i class="fas fa-trash-alt"></i></button>
+                    </div>
+                    <div class="flex gap-2 items-center">
+                        <select onchange="updateCommitment('${c.id}', 'week', this.value)" class="text-[10px] border border-slate-300 rounded p-1">
+                            <option value="1" ${c.week==1?'selected':''}>1° Sett</option>
+                            <option value="2" ${c.week==2?'selected':''}>2° Sett</option>
+                            <option value="3" ${c.week==3?'selected':''}>3° Sett</option>
+                            <option value="4" ${c.week==4?'selected':''}>4° Sett</option>
+                            <option value="5" ${c.week==5?'selected':''}>5° Sett</option>
+                        </select>
+                        <select onchange="updateCommitment('${c.id}', 'day', this.value)" class="text-[10px] border border-slate-300 rounded p-1">
+                            <option value="1" ${c.day==1?'selected':''}>Lun</option>
+                            <option value="2" ${c.day==2?'selected':''}>Mar</option>
+                            <option value="3" ${c.day==3?'selected':''}>Mer</option>
+                            <option value="4" ${c.day==4?'selected':''}>Gio</option>
+                            <option value="5" ${c.day==5?'selected':''}>Ven</option>
+                        </select>
+                        <span class="text-[10px] text-slate-500 ml-auto">Prep gg:</span>
+                        <input type="number" value="${c.prepDays}" onchange="updateCommitment('${c.id}', 'prepDays', this.value)" class="text-[10px] border border-slate-300 rounded w-10 p-1 text-center" min="0">
+                    </div>
+                </li>`);
+            });
+        }
+
+        function toggleTypeFilter(id) { activeTypeFilters.has(id) ? activeTypeFilters.delete(id) : activeTypeFilters.add(id); updateViews(); }
+
+        function addType() {
+            const name = document.getElementById('new-type-name').value.trim();
+            const days = parseFloat(document.getElementById('new-type-days').value) || 7;
+            if (!name) return;
+            docTypes.push({ id: 't_' + generateId(), name, defaultDays: days, color: document.getElementById('new-type-color').value });
+            document.getElementById('new-type-name').value = '';
+            saveData(); initSettingsUI();
+        }
+        function updateType(id, field, value) { 
+            const t = docTypes.find(x => x.id === id); 
+            if (t) { 
+                t[field] = field === 'defaultDays' ? parseFloat(value) || 1 : value; 
+                saveData(); 
+            } 
+        }
+        function deleteType(id) { if (!documents.some(d => d.typeId === id)) { docTypes = docTypes.filter(t => t.id !== id); saveData(); initSettingsUI(); } }
+
+        function addCommitment() {
+            const name = document.getElementById('new-comm-name').value.trim();
+            if (!name) return;
+            commitments.push({ 
+                id: 'c_' + generateId(), 
+                name, 
+                week: parseInt(document.getElementById('new-comm-week').value), 
+                day: parseInt(document.getElementById('new-comm-day').value), 
+                prepDays: parseInt(document.getElementById('new-comm-prep').value) || 0,
+                color: document.getElementById('new-comm-color').value
+            });
+            document.getElementById('new-comm-name').value = '';
+            saveData(); initSettingsUI();
+        }
+        function updateCommitment(id, field, value) { 
+            const c = commitments.find(x => x.id === id); 
+            if (c) { 
+                c[field] = (field === 'name' || field === 'color') ? value : parseInt(value); 
+                saveData(); 
+                if(field === 'color') updateViews();
+            } 
+        }
+        function deleteCommitment(id) { commitments = commitments.filter(c => c.id !== id); saveData(); initSettingsUI(); }
+
+        // --- CONFIRM & DRAG DROP ---
+        let confirmActionCb = null;
+        function openConfirmModal(title, msg, callback, iconClass = 'fa-info-circle text-slate-600', iconBg = 'bg-slate-100') {
+            document.getElementById('confirm-modal-title').textContent = title;
+            document.getElementById('confirm-modal-message').innerText = msg;
+            
+            const iconDiv = document.getElementById('confirm-icon').parentElement;
+            iconDiv.className = `w-10 h-10 rounded-full flex items-center justify-center mx-auto mb-3 ${iconBg}`;
+            document.getElementById('confirm-icon').className = `fas ${iconClass} text-lg`;
+            
+            confirmActionCb = callback;
+            document.getElementById('confirm-modal').classList.add('active');
+        }
+        function closeConfirmModal() { document.getElementById('confirm-modal').classList.remove('active'); confirmActionCb = null; }
+        document.getElementById('btn-confirm-action').addEventListener('click', () => { if (confirmActionCb) confirmActionCb(); closeConfirmModal(); });
+
+        // Multi-delete setup
+        function toggleDeleteMode() {
+            isDeleteMode = !isDeleteMode;
+            document.getElementById('delete-actions').classList.toggle('hidden');
+            document.getElementById('delete-actions').classList.toggle('flex');
+            selectedDocs.clear(); document.getElementById('selected-count').textContent = '0';
+            renderKanban();
+        }
+        function toggleDocSelection(e, id) { e.stopPropagation(); selectedDocs.has(id) ? selectedDocs.delete(id) : selectedDocs.add(id); document.getElementById('selected-count').textContent = selectedDocs.size; renderKanban(); }
+        function selectAllDocs() { documents.forEach(d => selectedDocs.add(d.id)); document.getElementById('selected-count').textContent = selectedDocs.size; renderKanban(); }
+        function deleteSelectedDocs() {
+            if(selectedDocs.size>0) openConfirmModal("Elimina", "Procedere?", () => { documents = documents.filter(d => !selectedDocs.has(d.id)); selectedDocs.clear(); toggleDeleteMode(); saveData(); updateViews(); });
+        }
+    </script>
+</body>
+</html>
